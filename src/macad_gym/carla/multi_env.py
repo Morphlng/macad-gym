@@ -35,6 +35,7 @@ from macad_gym.multi_actor_env import MultiActorEnv
 from macad_gym import LOG_DIR
 from macad_gym.core.sensors.utils import preprocess_image
 from macad_gym.core.maps.nodeid_coord_map import MAP_TO_COORDS_MAPPING
+from macad_gym.core.carla_data_provider import CarlaDataProvider
 
 # from macad_gym.core.sensors.utils import get_transform_from_nearest_way_point
 from macad_gym.carla.reward import Reward
@@ -607,6 +608,14 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         self._traffic_manager.set_global_distance_to_leading_vehicle(2.5)
         self._traffic_manager.set_respawn_dormant_vehicles(True)
         self._traffic_manager.set_synchronous_mode(self._sync_server)
+        
+        # Prepare data provider
+        CarlaDataProvider.set_client(self._client)
+        CarlaDataProvider.set_world(self.world)
+        CarlaDataProvider.set_traffic_manager_port(
+            self._traffic_manager.get_port()
+        )
+        
         # Set the spectator/server view if rendering is enabled
         if self._render and self._env_config.get("spectator_loc"):
             spectator = self.world.get_spectator()
@@ -622,7 +631,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             )
 
         if self._env_config.get("enable_planner"):
-            planner_dao = GlobalRoutePlannerDAO(self.world.get_map())
+            planner_dao = GlobalRoutePlannerDAO(CarlaDataProvider.get_map())
             self.planner = GlobalRoutePlanner(planner_dao)
             self.planner.setup()
 
@@ -632,21 +641,16 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         Returns:
             N/A
         """
+        # TODO: Create a SensorDataProvider
         for colli in self._collisions.values():
             if colli.sensor.is_alive:
                 colli.sensor.destroy()
         for lane in self._lane_invasions.values():
             if lane.sensor.is_alive:
                 lane.sensor.destroy()
-        for actor in self._actors.values():
-            if actor.is_alive:
-                actor.destroy()
-        for npc in self._npc_vehicles:
-            npc.destroy()
-        for npc in zip(*self._npc_pedestrians):
-            npc[1].stop()  # stop controller
-            npc[0].destroy()  # kill entity
-        # Note: the destroy process for cameras is handled in camera_manager.py
+        
+        # Use CarlaDataProvider to destroy actors
+        CarlaDataProvider.cleanup()
 
         self._cameras = {}
         self._actors = {}
@@ -679,6 +683,8 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
 
             self._server_port = None
             self._server_process = None
+        
+        CarlaDataProvider.reset(completely=True)
 
     def reset(self):
         """Reset the carla world, call _init_server()
@@ -704,7 +710,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 raise e
 
         # Set appropriate initial values for all actors
-        for actor_id, actor_config in self._actor_configs.items():
+        for actor_id, _ in self._actor_configs.items():
             if self._done_dict.get(actor_id, True):
                 self._last_reward[actor_id] = None
                 self._total_reward[actor_id] = None
@@ -740,6 +746,23 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         """
         pass
 
+    def get_transform(self, actor_id):
+        loc = carla.Location(
+            self._start_pos[actor_id][0],
+            self._start_pos[actor_id][1],
+            self._start_pos[actor_id][2],
+        )
+        rot = (
+            CarlaDataProvider.get_map()
+            .get_waypoint(loc, project_to_road=True)
+            .transform.rotation
+        )
+        #: If yaw is provided in addition to (X, Y, Z), set yaw
+        if len(self._start_pos[actor_id]) > 3:
+            rot.yaw = self._start_pos[actor_id][3]
+
+        return carla.Transform(loc, rot)
+
     def _spawn_new_actor(self, actor_id):
         """Spawn an agent as per the blueprint at the given pose
 
@@ -762,32 +785,19 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             # Find closest traffic light actor in world.actor_list and return
             from macad_gym.core.controllers import traffic_lights
 
-            loc = carla.Location(
-                self._start_pos[actor_id][0],
-                self._start_pos[actor_id][1],
-                self._start_pos[actor_id][2],
-            )
-            rot = (
-                self.world.get_map()
-                .get_waypoint(loc, project_to_road=True)
-                .transform.rotation
-            )
-            #: If yaw is provided in addition to (X, Y, Z), set yaw
-            if len(self._start_pos[actor_id]) > 3:
-                rot.yaw = self._start_pos[actor_id][3]
-            transform = carla.Transform(loc, rot)
+            transform = self.get_transform(actor_id)
             self._actor_configs[actor_id]["start_transform"] = transform
             tls = traffic_lights.get_tls(self.world, transform, sort=True)
-            return tls[0][0]  #: Return the key (carla.TrafficLight object) of
-            #: closest match
+            #: Return the key (carla.TrafficLight object) of closest match
+            return tls[0][0]  
 
         if actor_type == "pedestrian":
-            blueprints = self.world.get_blueprint_library().filter(
+            blueprints = CarlaDataProvider._blueprint_library.filter(
                 "walker.pedestrian.*"
             )
 
         elif actor_type == "vehicle_4W":
-            blueprints = self.world.get_blueprint_library().filter("vehicle")
+            blueprints = CarlaDataProvider._blueprint_library.filter("vehicle")
             # Further filter down to 4-wheeled vehicles
             blueprints = [
                 b for b in blueprints if int(b.get_attribute("number_of_wheels")) == 4
@@ -808,49 +818,28 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                     )
                 )
         elif actor_type == "vehicle_2W":
-            blueprints = self.world.get_blueprint_library().filter("vehicle")
+            blueprints = CarlaDataProvider._blueprint_library.filter("vehicle")
             # Further filter down to 2-wheeled vehicles
             blueprints = [
                 b for b in blueprints if int(b.get_attribute("number_of_wheels")) == 2
             ]
 
         blueprint = random.choice(blueprints)
-        loc = carla.Location(
-            x=self._start_pos[actor_id][0],
-            y=self._start_pos[actor_id][1],
-            z=self._start_pos[actor_id][2],
-        )
-        rot = (
-            self.world.get_map()
-            .get_waypoint(loc, project_to_road=True)
-            .transform.rotation
-        )
-        #: If yaw is provided in addition to (X, Y, Z), set yaw
-        if len(self._start_pos[actor_id]) > 3:
-            rot.yaw = self._start_pos[actor_id][3]
-        transform = carla.Transform(loc, rot)
+        blueprint.set_attribute("role_name", actor_id) 
+        transform = self.get_transform(actor_id)
         self._actor_configs[actor_id]["start_transform"] = transform
         vehicle = None
         for retry in range(RETRIES_ON_ERROR):
-            vehicle = self.world.try_spawn_actor(blueprint, transform)
-            if self._sync_server:
-                self.world.tick()
+            vehicle = CarlaDataProvider.request_new_actor(
+                actor_type, transform, blueprint,
+                autopilot=self._actor_configs[actor_id].get("auto_control", False)
+            )
+
             if vehicle is not None and vehicle.get_location().z > 0.0:
-                # Register it under traffic manager
-                # Walker vehicle type does not have autopilot. Use walker controller ai
-                if actor_type == "pedestrian":
-                    # vehicle.set_simulate_physics(False)
-                    pass
-                else:
-                    vehicle.set_autopilot(False, self._traffic_manager.get_port())
                 break
-            # Wait to see if spawn area gets cleared before retrying
-            # time.sleep(0.5)
-            # self._clean_world()
+
             print("spawn_actor: Retry#:{}/{}".format(retry + 1, RETRIES_ON_ERROR))
-        if vehicle is None:
-            # Request a spawn one last time possibly raising the error
-            vehicle = self.world.spawn_actor(blueprint, transform)
+                
         return vehicle
 
     def _reset(self, clean_world=True):
@@ -1020,6 +1009,8 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             self._scenario_map.get("num_pedestrians", 0),
         )
 
+        CarlaDataProvider.on_carla_tick()
+
     def _load_scenario(self, scenario_parameter):
         self._scenario_map = {}
         # If config contains a single scenario, then use it,
@@ -1085,7 +1076,6 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         if prev_image is None:
             prev_image = image
         if self._framestack == 2:
-            # image = np.concatenate([prev_image, image], axis=2)
             image = np.concatenate([prev_image, image])
         # Structure the observation
         if not self._actor_configs[actor_id]["send_measurements"]:
@@ -1235,8 +1225,6 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 self._control_clock,
             )
             self._manual_controller.parse_events(self, self._control_clock)
-
-            # TODO: consider move this to Render as well
             self._manual_control_camera_manager.render(
                 Render.get_screen(), self._manual_control_render_pose
             )
@@ -1298,6 +1286,8 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             self.world.tick()
             # `wait_for_tick` is no longer needed, see https://github.com/carla-simulator/carla/pull/1803
             # self.world.wait_for_tick()
+        
+        CarlaDataProvider.on_carla_tick()
 
         # Process observations
         py_measurements = self._read_observation(actor_id)
@@ -1415,11 +1405,18 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         else:
             next_command = "LANE_FOLLOW"
 
+        # Sensor Data
         collision_vehicles = self._collisions[actor_id].collision_vehicles
         collision_pedestrians = self._collisions[actor_id].collision_pedestrians
         collision_other = self._collisions[actor_id].collision_other
         intersection_otherlane = self._lane_invasions[actor_id].offlane
         intersection_offroad = self._lane_invasions[actor_id].offroad
+
+        # CarlaDataProvider
+        cur_loc = CarlaDataProvider.get_location(cur)
+        cur_transform = CarlaDataProvider.get_transform(cur)
+        # This velocity is sqrt(vx^2 + vy^2)
+        cur_velocity = CarlaDataProvider.get_velocity(cur)
 
         if next_command == "REACH_GOAL":
             distance_to_goal = 0.0
@@ -1431,10 +1428,8 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         distance_to_goal_euclidean = float(
             np.linalg.norm(
                 [
-                    self._actors[actor_id].get_location().x
-                    - self._end_pos[actor_id][0],
-                    self._actors[actor_id].get_location().y
-                    - self._end_pos[actor_id][1],
+                    cur_loc.x - self._end_pos[actor_id][0],
+                    cur_loc.y - self._end_pos[actor_id][1],
                 ]
             )
         )
@@ -1442,12 +1437,12 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         py_measurements = {
             "episode_id": self._episode_id_dict[actor_id],
             "step": self._num_steps[actor_id],
-            "x": self._actors[actor_id].get_location().x,
-            "y": self._actors[actor_id].get_location().y,
-            "pitch": self._actors[actor_id].get_transform().rotation.pitch,
-            "yaw": self._actors[actor_id].get_transform().rotation.yaw,
-            "roll": self._actors[actor_id].get_transform().rotation.roll,
-            "forward_speed": self._actors[actor_id].get_velocity().x,
+            "x": cur_loc.x,
+            "y": cur_loc.y,
+            "pitch": cur_transform.rotation.pitch,
+            "yaw": cur_transform.rotation.yaw,
+            "roll": cur_transform.rotation.roll,
+            "forward_speed": cur_velocity,  # Used to be vx
             "distance_to_goal": distance_to_goal,
             "distance_to_goal_euclidean": distance_to_goal_euclidean,
             "collision_vehicles": collision_vehicles,

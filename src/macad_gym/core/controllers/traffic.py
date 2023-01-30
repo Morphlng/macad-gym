@@ -1,6 +1,7 @@
 ﻿import random
 import logging
 import carla
+from macad_gym.core.carla_data_provider import CarlaDataProvider
 
 # TODO make the seed user configurable
 random.seed(10)
@@ -11,20 +12,20 @@ def apply_traffic(world, traffic_manager, num_vehicles, num_pedestrians, safe=Fa
     # --------------
     # Spawn vehicles
     # --------------
-    blueprints = world.get_blueprint_library().filter("vehicle.*")
+    blueprints = CarlaDataProvider._blueprint_library.filter("vehicle.*")
     if safe:
         blueprints = list(filter(lambda x: int(x.get_attribute('number_of_wheels')) == 4 and not
-                (x.id.endswith('microlino') or
-                 x.id.endswith('carlacola') or
-                 x.id.endswith('cybertruck') or
-                 x.id.endswith('t2') or
-                 x.id.endswith('sprinter') or
-                 x.id.endswith('firetruck') or
-                 x.id.endswith('ambulance')), blueprints))
+                                 (x.id.endswith('microlino') or
+                                  x.id.endswith('carlacola') or
+                                  x.id.endswith('cybertruck') or
+                                  x.id.endswith('t2') or
+                                  x.id.endswith('sprinter') or
+                                  x.id.endswith('firetruck') or
+                                  x.id.endswith('ambulance')), blueprints))
 
     blueprints = sorted(blueprints, key=lambda bp: bp.id)
 
-    spawn_points = world.get_map().get_spawn_points()
+    spawn_points = CarlaDataProvider._spawn_points
     number_of_spawn_points = len(spawn_points)
 
     random.shuffle(spawn_points)
@@ -48,28 +49,24 @@ def apply_traffic(world, traffic_manager, num_vehicles, num_pedestrians, safe=Fa
         blueprint.set_attribute('role_name', 'autopilot')
 
         # spawn the cars and set their autopilot and light state all together
-        vehicle = world.try_spawn_actor(blueprint, transform)
+        vehicle = CarlaDataProvider.request_new_actor(
+            "car", transform, blueprint, autopilot=True)
         if vehicle is not None:
-            vehicle.set_autopilot(True, traffic_manager.get_port())
             vehicles_list.append(vehicle)
         else:
             failed_v += 1
 
     logger.info("{}/{} vehicles correctly spawned.".format(num_vehicles-failed_v, num_vehicles))
 
-    # Set automatic vehicle lights update if specified
-    # if args.car_lights_on:
-    #     all_vehicle_actors = world.get_actors(vehicles_id_list)
-    #     for actor in all_vehicle_actors:
-    #         traffic_manager.update_vehicle_lights(actor, True)
-
     # -------------
     # Spawn Walkers
     # -------------
     percentagePedestriansRunning = 0.0  # how many pedestrians will run
     percentagePedestriansCrossing = 0.0  # how many pedestrians will walk through the road
-    blueprints = world.get_blueprint_library().filter("walker.pedestrian.*")
-    pedestrian_controller_bp = world.get_blueprint_library().find('controller.ai.walker')
+    blueprints = CarlaDataProvider._blueprint_library.filter(
+        "walker.pedestrian.*")
+    pedestrian_controller_bp = CarlaDataProvider._blueprint_library.find(
+        'controller.ai.walker')
 
     # Take all the random locations to spawn
     spawn_points = []
@@ -97,15 +94,17 @@ def apply_traffic(world, traffic_manager, num_vehicles, num_pedestrians, safe=Fa
                 speed = pedestrian_bp.get_attribute('speed').recommended_values[2]  # running
         else:
             speed = 0.0
-        pedestrian = world.try_spawn_actor(pedestrian_bp, spawn_point)
+        pedestrian = CarlaDataProvider.request_new_actor(
+            "pedestrian", spawn_point, pedestrian_bp)
         if pedestrian is not None:
-            controller = world.try_spawn_actor(pedestrian_controller_bp, carla.Transform(), pedestrian)
+            controller = CarlaDataProvider.request_new_actor(
+                "controller", carla.Transform(), pedestrian_controller_bp, attach_to=pedestrian)
             if controller is not None:
                 pedestrians_list.append(pedestrian)
                 controllers_list.append(controller)
                 pedestrians_speed.append(speed)
             else:
-                pedestrian.destroy()
+                CarlaDataProvider.remove_actor_by_id(pedestrian.id)
                 failed_p += 1
         else:
             failed_p += 1

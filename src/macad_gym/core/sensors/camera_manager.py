@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 import os
 from enum import Enum
+from macad_gym.core.carla_data_provider import CarlaDataProvider
 
 import numpy as np
 import pygame
@@ -68,10 +69,9 @@ class CameraManager(object):
                 'Camera Semantic Segmentation (CityScapes Palette)'
             ], ['sensor.lidar.ray_cast', None, 'Lidar (Ray-Cast)']
         ]
-        world = self._parent.get_world()
-        bp_library = world.get_blueprint_library()
+
         for item in self._sensors:
-            bp = bp_library.find(item[0])
+            bp = CarlaDataProvider._blueprint_library.find(item[0])
             if item[0].startswith('sensor.camera'):
                 bp.set_attribute('image_size_x', str(hud.dim[0]))
                 bp.set_attribute('image_size_y', str(hud.dim[1]))
