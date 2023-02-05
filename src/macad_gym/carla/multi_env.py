@@ -659,6 +659,9 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         self._path_trackers = {}
         self._collisions = {}
         self._lane_invasions = {}
+        self._manual_controller = None
+        self._manual_control_camera_manager = None
+        self._control_clock = None
 
         print("Cleaned-up the world...")
 
@@ -724,8 +727,8 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 while cam.callback_count == 0:
                     if self._sync_server:
                         self.world.tick()
-                        # `wait_for_tick` is no longer needed, see https://github.com/carla-simulator/carla/pull/1803
-                        # self.world.wait_for_tick()
+                    else:
+                        self.world.wait_for_tick()
                 if cam.image is None:
                     print("callback_count:", actor_id, ":", cam.callback_count)
                 obs = self._encode_obs(actor_id, cam.image, py_measurement)
@@ -1215,15 +1218,8 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 "steer", steer, "throttle", throttle, "brake", brake, "reverse", reverse
             )
 
-        config = self._actor_configs[actor_id]
-        if config["manual_control"]:
+        if self._control_clock is not None:
             self._control_clock.tick(60)
-            self._manual_control_camera_manager._hud.tick(
-                self.world,
-                self._actors[actor_id],
-                self._collisions[actor_id],
-                self._control_clock,
-            )
             self._manual_controller.parse_events(self, self._control_clock)
             self._manual_control_camera_manager.render(
                 Render.get_screen(), self._manual_control_render_pose
@@ -1232,6 +1228,15 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 Render.get_screen(), self._manual_control_render_pose
             )
             pygame.display.flip()
+
+        config = self._actor_configs[actor_id]
+        if config["manual_control"]:
+            self._manual_control_camera_manager._hud.tick(
+                self.world,
+                self._actors[actor_id],
+                self._collisions[actor_id],
+                self._control_clock,
+            )
         elif config["auto_control"]:
             if getattr(self._actors[actor_id], "set_autopilot", 0):
                 self._actors[actor_id].set_autopilot(
@@ -1284,8 +1289,8 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         # "(A)Synchronous (carla) server"
         if self._sync_server:
             self.world.tick()
-            # `wait_for_tick` is no longer needed, see https://github.com/carla-simulator/carla/pull/1803
-            # self.world.wait_for_tick()
+        else:
+            self.world.wait_for_tick()
         
         CarlaDataProvider.on_carla_tick()
 
