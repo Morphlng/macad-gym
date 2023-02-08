@@ -94,6 +94,6 @@ class MacadAgent(AutonomousAgent):
         Returns the next vehicle controls
         """
         timestamp = GameTime.get_time()
-        control = self.run_step(self.obs, timestamp)
+        control = self.run_step(action, timestamp)
         control.manual_gear_shift = False
         return control
