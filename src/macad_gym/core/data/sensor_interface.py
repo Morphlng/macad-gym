@@ -74,12 +74,9 @@ class SensorDataProvider:
                 ...
             }
         """
-        if data is None:
-            filter_data = None
-        else:
+        if data is not None:
             filter_data = {k:v for k,v in data.items() if k != "ManualControl"}
-
-        SensorDataProvider._camera_data_dict[actor_id] = filter_data
+            SensorDataProvider._camera_data_dict[actor_id] = filter_data
 
     @staticmethod
     def update_collision_sensor(actor_id, sensor):

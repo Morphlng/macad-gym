@@ -79,14 +79,15 @@ class MacadAgent(AutonomousAgent):
             )
 
         self.sensor_list.append(sensor_spec)
-    
+
     def on_carla_tick(self, snapshot):
         """Update obs on carla tick
         """
         if not self.sensor_interface._new_data_buffers.empty():
             self.obs = self.sensor_interface.get_data()
-        
-        SensorDataProvider.update_camera_data(self.actor_config["actor_id"], self.obs)
+
+        SensorDataProvider.update_camera_data(
+            self.actor_config["actor_id"], self.obs)
 
     def __call__(self, action=None):
         """
@@ -94,6 +95,6 @@ class MacadAgent(AutonomousAgent):
         Returns the next vehicle controls
         """
         timestamp = GameTime.get_time()
-        control = self.run_step(action, timestamp)
+        control = self.run_step(self.obs, timestamp)
         control.manual_gear_shift = False
         return control

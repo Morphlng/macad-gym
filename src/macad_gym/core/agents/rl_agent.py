@@ -65,3 +65,12 @@ class RLAgent(MacadAgent):
                 hand_brake=input_data["hand_brake"],
                 reverse=input_data["reverse"],
             )
+
+    def __call__(self, action=None):
+        """
+        Execute the agent call, e.g. agent()
+        Returns the next vehicle controls
+        """
+        control = self.run_step(action)
+        control.manual_gear_shift = False
+        return control

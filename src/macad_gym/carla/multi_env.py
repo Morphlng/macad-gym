@@ -716,9 +716,9 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 image = None
                 while image is None:
                     try:
-                        cameras_data = self._agents[actor_id]._agent.sensor_interface.get_data()
+                        cameras_data = SensorDataProvider.get_camera_data(actor_id)
                         image = cameras_data[actor_config["camera_type"]][0]
-                    except SensorReceivedNoData as e:
+                    except KeyError as e:
                         if self._sync_server:
                             self.world.tick()
                         else:
@@ -1457,7 +1457,7 @@ def collided_done(py_measurements):
     return bool(collided)  # or m["total_reward"] < -100)
 
 def toggle_autopilot(actor, activate, traffic_port=8000):
-    if hasattr(actor, "set_autopilot", False):
+    if hasattr(actor, "set_autopilot"):
         actor.set_autopilot(activate, traffic_port)
 
 def get_next_actions(measurements, is_discrete_actions):
