@@ -3,7 +3,7 @@ import weakref
 import math
 import collections
 
-from macad_gym.core.carla_data_provider import CarlaDataProvider
+from macad_gym.core.data.carla_data_provider import CarlaDataProvider
 
 class LaneInvasionSensor(object):
     """Lane Invasion class from carla manual_control.py

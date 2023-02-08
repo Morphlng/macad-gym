@@ -15,16 +15,11 @@ def get_actor_display_name(actor, truncate=250):
 class HUD(object):
     def __init__(self, width, height):
         self.dim = (width, height)
-        # font = pygame.font.Font(pygame.font.get_default_font(), 20)
         fonts = [x for x in pygame.font.get_fonts() if 'mono' in x]
         default_font = 'ubuntumono'
         mono = default_font if default_font in fonts else fonts[0]
         mono = pygame.font.match_font(mono)
         self._font_mono = pygame.font.Font(mono, 14)
-        #  the _notifications and help are not needed for multi_env,
-        #   they depends on other classes.
-        # self._notifications = FadingText(font, (width, 40), (0, height - 40))
-        # self.help = HelpText(pygame.font.Font(mono, 24), width, height)
         self.server_fps = 0
         self.frame_number = 0
         self.simulation_time = 0
@@ -78,9 +73,6 @@ class HUD(object):
         ]
         if len(vehicles) > 1:
             self._info_text += ['Nearby vehicles:']
-            # distance = lambda l: math.sqrt((l.x - t.location.x)**2 +
-            #                               (l.y - t.location.y)**2 +
-            #                               (l.z - t.location.z)**2)
             vehicles = [(self.distance(x.get_location(), t), x)
                         for x in vehicles if x.id != vehicle.id]
             for d, vehicle in sorted(vehicles):
@@ -88,7 +80,6 @@ class HUD(object):
                     break
                 vehicle_type = get_actor_display_name(vehicle, truncate=22)
                 self._info_text.append('% 4dm %s' % (d, vehicle_type))
-        # self._notifications.tick(world, clock)
 
     def distance(self, l, t):  # noqa: E741
         return math.sqrt((l.x - t.location.x)**2 + (l.y - t.location.y)**2 +
@@ -99,13 +90,11 @@ class HUD(object):
 
     def notification(self, text, seconds=2.0):
         logger.info("Notification disabled: "+text)
-        # self._notifications.set_text(text, seconds=seconds)
 
     def error(self, text):
         logger.info("Notification error disabled: "+text)
-        # self._notifications.set_text('Error: %s' % text, (255, 0, 0))
 
-    def render(self, display, render_pose=(0,0)):
+    def render(self, display, render_pose=(0, 0)):
         if self._show_info:
             info_surface = pygame.Surface((220, self.dim[1]))
             info_surface.set_alpha(100)
@@ -150,5 +139,3 @@ class HUD(object):
                                                      (255, 255, 255))
                     display.blit(surface, (8, v_offset))
                 v_offset += 18
-        # self._notifications.render(display)
-        # self.help.render(display)

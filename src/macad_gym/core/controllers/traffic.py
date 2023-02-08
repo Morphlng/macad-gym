@@ -1,7 +1,7 @@
 ﻿import random
 import logging
 import carla
-from macad_gym.core.carla_data_provider import CarlaDataProvider
+from macad_gym.core.data.carla_data_provider import CarlaDataProvider
 
 # TODO make the seed user configurable
 random.seed(10)

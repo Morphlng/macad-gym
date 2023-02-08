@@ -1,7 +1,7 @@
 from __future__ import absolute_import
 import os
 from enum import Enum
-from macad_gym.core.carla_data_provider import CarlaDataProvider
+from macad_gym.core.data.carla_data_provider import CarlaDataProvider
 
 import numpy as np
 import pygame

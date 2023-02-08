@@ -17,7 +17,7 @@ configs = {
         "actors": {
             "car1": {
                 "start": [107, 133, 0.5],
-                "end": [304, 133, 0.5],
+                "end": [300, 133, 0.5],
             },
             "car2": {
                 "start": [115, 133, 0.5],
@@ -31,7 +31,7 @@ configs = {
     },
     "env": {
         "server_map": "/Game/Carla/Maps/Town01",
-        "render": False,
+        "render": True,
         "render_x_res": 800,    # For both Carla-Server and Manual-Control
         "render_y_res": 600,
         "x_res": 84,            # Used for camera sensor view size
@@ -43,7 +43,7 @@ configs = {
         "use_depth_camera": False,
         "send_measurements": False,
         "enable_planner": True,
-        "spectator_loc": [70, -125, 9],
+        "spectator_loc": [100, 133, 9],
         "sync_server": True,
         "fixed_delta_seconds": 0.05,
     },

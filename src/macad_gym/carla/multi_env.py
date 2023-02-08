@@ -27,7 +27,6 @@ import math
 import numpy as np  # linalg.norm is used
 import GPUtil
 from gym.spaces import Box, Discrete, Tuple, Dict
-import pygame
 import carla
 
 from macad_gym.core.controllers.traffic import apply_traffic
@@ -35,19 +34,19 @@ from macad_gym.multi_actor_env import MultiActorEnv
 from macad_gym import LOG_DIR
 from macad_gym.core.sensors.utils import preprocess_image
 from macad_gym.core.maps.nodeid_coord_map import MAP_TO_COORDS_MAPPING
-from macad_gym.core.carla_data_provider import CarlaDataProvider
+from macad_gym.core.data.carla_data_provider import CarlaDataProvider
+from macad_gym.core.data.sensor_interface import SensorDataProvider, SensorReceivedNoData
+from macad_gym.core.data.timer import GameTime
 
-# from macad_gym.core.sensors.utils import get_transform_from_nearest_way_point
 from macad_gym.carla.reward import Reward
 from macad_gym.core.sensors.hud import HUD
 from macad_gym.viz.render import Render
 from macad_gym.carla.scenarios import Scenarios
+from macad_gym.core.agents import AgentWrapper, HumanAgent, RLAgent
 
 # The following imports require carla to be imported already.
-from macad_gym.core.sensors.camera_manager import CameraManager, CAMERA_TYPES
 from macad_gym.core.sensors.derived_sensors import LaneInvasionSensor
 from macad_gym.core.sensors.derived_sensors import CollisionSensor
-from macad_gym.core.controllers.keyboard_control import KeyboardControl
 from macad_gym.carla.PythonAPI.agents.navigation.global_route_planner_dao import (  # noqa: E501
     GlobalRoutePlannerDAO,
 )
@@ -329,14 +328,8 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         self._sync_server = self._env_config["sync_server"]
         self._fixed_delta_seconds = self._env_config["fixed_delta_seconds"]
 
-        # Initialize to be compatible with cam_manager to set HUD.
-        pygame.font.init()  # for HUD
-        self._hud = HUD(self._render_x_res, self._render_y_res)
-
         # For manual_control
-        self._control_clock = None
-        self._manual_controller = None
-        self._manual_control_camera_manager = None
+        self.human_agent = None
 
         # Render related
         Render.resize_screen(self._render_x_res, self._render_y_res)
@@ -431,12 +424,10 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         self._last_reward = {}
         self._npc_vehicles = []  # List of NPC vehicles
         self._npc_pedestrians = []  # List of NPC pedestrians
-        self._agents = {}  # Dictionary of macad_agents with agent_id as key
+        self._agents = {}  # Dictionary of macad_agents with actor_id as key
+        self._agent_callbacks = []  # List of callback_ids return by world.on_tick(agent.on_carla_tick)
         self._actors = {}  # Dictionary of actors with actor_id as key
-        self._cameras = {}  # Dictionary of sensors with actor_id as key
         self._path_trackers = {}  # Dictionary of sensors with actor_id as key
-        self._collisions = {}  # Dictionary of sensors with actor_id as key
-        self._lane_invasions = {}  # Dictionary of sensors with actor_id as key
         self._scenario_map = {}  # Dictionary with current scenario map config
 
     @staticmethod
@@ -608,14 +599,17 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         self._traffic_manager.set_global_distance_to_leading_vehicle(2.5)
         self._traffic_manager.set_respawn_dormant_vehicles(True)
         self._traffic_manager.set_synchronous_mode(self._sync_server)
-        
+
         # Prepare data provider
         CarlaDataProvider.set_client(self._client)
         CarlaDataProvider.set_world(self.world)
         CarlaDataProvider.set_traffic_manager_port(
             self._traffic_manager.get_port()
         )
-        
+
+        # Set GameTime
+        self.world.on_tick(lambda snapshot: GameTime.on_carla_tick(snapshot.timestamp))
+
         # Set the spectator/server view if rendering is enabled
         if self._render and self._env_config.get("spectator_loc"):
             spectator = self.world.get_spectator()
@@ -641,27 +635,23 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         Returns:
             N/A
         """
-        # TODO: Create a SensorDataProvider
-        for colli in self._collisions.values():
-            if colli.sensor.is_alive:
-                colli.sensor.destroy()
-        for lane in self._lane_invasions.values():
-            if lane.sensor.is_alive:
-                lane.sensor.destroy()
-        
-        # Use CarlaDataProvider to destroy actors
+        SensorDataProvider.cleanup()
         CarlaDataProvider.cleanup()
+        GameTime.restart()
 
-        self._cameras = {}
+        for actor_id, agent in self._agents.items():
+            agent.cleanup()
+        
+        for callback_id in self._agent_callbacks:
+            self.world.remove_on_tick(callback_id)
+
         self._actors = {}
+        self._agents = {}
+        self._agent_callbacks = []
         self._npc_vehicles = []
         self._npc_pedestrians = []
         self._path_trackers = {}
-        self._collisions = {}
-        self._lane_invasions = {}
-        self._manual_controller = None
-        self._manual_control_camera_manager = None
-        self._control_clock = None
+        self.human_agent = None
 
         print("Cleaned-up the world...")
 
@@ -686,7 +676,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
 
             self._server_port = None
             self._server_process = None
-        
+
         CarlaDataProvider.reset(completely=True)
 
     def reset(self):
@@ -713,7 +703,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 raise e
 
         # Set appropriate initial values for all actors
-        for actor_id, _ in self._actor_configs.items():
+        for actor_id, actor_config in self._actor_configs.items():
             if self._done_dict.get(actor_id, True):
                 self._last_reward[actor_id] = None
                 self._total_reward[actor_id] = None
@@ -721,17 +711,20 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
 
                 py_measurement = self._read_observation(actor_id)
                 self._prev_measurement[actor_id] = py_measurement
-                cam = self._cameras[actor_id]
-                # Wait for the sensor (camera) actor to start streaming
-                # Shouldn't take too long
-                while cam.callback_count == 0:
-                    if self._sync_server:
-                        self.world.tick()
-                    else:
-                        self.world.wait_for_tick()
-                if cam.image is None:
-                    print("callback_count:", actor_id, ":", cam.callback_count)
-                obs = self._encode_obs(actor_id, cam.image, py_measurement)
+                
+                # Get initial observation
+                image = None
+                while image is None:
+                    try:
+                        cameras_data = self._agents[actor_id]._agent.sensor_interface.get_data()
+                        image = cameras_data[actor_config["camera_type"]][0]
+                    except SensorReceivedNoData as e:
+                        if self._sync_server:
+                            self.world.tick()
+                        else:
+                            self.world.wait_for_tick()
+                
+                obs = self._encode_obs(actor_id, image, py_measurement)
                 self._obs_dict[actor_id] = obs
                 # Actor correctly reset
                 self._done_dict[actor_id] = False
@@ -792,7 +785,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             self._actor_configs[actor_id]["start_transform"] = transform
             tls = traffic_lights.get_tls(self.world, transform, sort=True)
             #: Return the key (carla.TrafficLight object) of closest match
-            return tls[0][0]  
+            return tls[0][0]
 
         if actor_type == "pedestrian":
             blueprints = CarlaDataProvider._blueprint_library.filter(
@@ -828,7 +821,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             ]
 
         blueprint = random.choice(blueprints)
-        blueprint.set_attribute("role_name", actor_id) 
+        blueprint.set_attribute("role_name", actor_id)
         transform = self.get_transform(actor_id)
         self._actor_configs[actor_id]["start_transform"] = transform
         vehicle = None
@@ -842,7 +835,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 break
 
             print("spawn_actor: Retry#:{}/{}".format(retry + 1, RETRIES_ON_ERROR))
-                
+
         return vehicle
 
     def _reset(self, clean_world=True):
@@ -906,6 +899,11 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                         "Unable to spawn actor:{}".format(actor_id)
                     )
 
+                # We'll use this in SensorDataProvider
+                # The "actor_id" is user defined and is used to identify the actor
+                # The "id" is the carla actor id and is used to identify the actor in the carla world
+                actor_config.update({"actor_id": actor_id, "id": self._actors[actor_id].id})
+
                 if self._env_config["enable_planner"]:
                     self._path_trackers[actor_id] = PathTracker(
                         self.world,
@@ -925,55 +923,37 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
 
                 # Spawn collision and lane sensors if necessary
                 if actor_config["collision_sensor"] == "on":
-                    collision_sensor = CollisionSensor(self._actors[actor_id], 0)
-                    self._collisions.update({actor_id: collision_sensor})
+                    SensorDataProvider.update_collision_sensor(actor_id, CollisionSensor(self._actors[actor_id], 0))
                 if actor_config["lane_sensor"] == "on":
-                    lane_sensor = LaneInvasionSensor(self._actors[actor_id], 0)
-                    self._lane_invasions.update({actor_id: lane_sensor})
+                    SensorDataProvider.update_lane_invasion_sensor(actor_id, LaneInvasionSensor(self._actors[actor_id], 0))
 
-                # Spawn cameras
-                pygame.font.init()  # for HUD
-                hud = HUD(self._env_config["x_res"], self._env_config["y_res"])
-                camera_manager = CameraManager(self._actors[actor_id], hud)
-                if actor_config["log_images"]:
-                    # TODO: The recording option should be part of config
-                    # 1: Save to disk during runtime
-                    # 2: save to memory first, dump to disk on exit
-                    camera_manager.set_recording_option(1)
-
-                # in CameraManger's._sensors
-                camera_type = self._actor_configs[actor_id]["camera_type"]
-                camera_pos = getattr(
-                    self._actor_configs[actor_id], "camera_position", 0
-                )
-                camera_types = [ct.name for ct in CAMERA_TYPES]
-                assert (
-                    camera_type in camera_types
-                ), "Camera type `{}` not available. Choose in {}.".format(
-                    camera_type, camera_types
-                )
-                camera_manager.set_sensor(
-                    CAMERA_TYPES[camera_type].value - 1, int(camera_pos), notify=False
-                )
-                assert camera_manager.sensor.is_listening
-                self._cameras.update({actor_id: camera_manager})
-
-                # Manual Control
-                if actor_config["manual_control"]:
-                    self._control_clock = pygame.time.Clock()
-
-                    self._manual_controller = KeyboardControl(
-                        self, actor_config["auto_control"]
-                    )
-                    self._manual_controller.actor_id = actor_id
-
-                    self.world.on_tick(self._hud.on_world_tick)
-                    self._manual_control_camera_manager = CameraManager(
-                        self._actors[actor_id], self._hud
-                    )
-                    self._manual_control_camera_manager.set_sensor(
-                        CAMERA_TYPES["rgb"].value - 1, pos=2, notify=False
-                    )
+                if not actor_config["manual_control"]:
+                    agent = RLAgent(actor_config)
+                    self._agent_callbacks.append(self.world.on_tick(agent.on_carla_tick))
+                    agent = AgentWrapper(agent)
+                    # Spawn cameras
+                    agent.setup_sensors(self._actors[actor_id])
+                    # TODO: restore this ability                    
+                    # if actor_config["log_images"]:
+                    #     # 1: Save to disk during runtime
+                    #     # 2: save to memory first, dump to disk on exit
+                    #     camera_manager.set_recording_option(1)
+                else:
+                    actor_config.update({
+                        "render_config": {
+                            "width": self._env_config["render_x_res"],
+                            "height": self._env_config["render_y_res"],
+                            "render_pos": self._manual_control_render_pose
+                        }
+                    })
+                    agent = HumanAgent(actor_config)
+                    self._agent_callbacks.append(self.world.on_tick(agent._hic._hud.on_world_tick))
+                    self._agent_callbacks.append(self.world.on_tick(agent.on_carla_tick))
+                    agent = AgentWrapper(agent)
+                    agent.setup_sensors(self._actors[actor_id])
+                    self.human_agent = agent    # quick access to human agent
+                
+                self._agents.update({actor_id: agent})
 
                 self._start_coord.update(
                     {
@@ -1022,11 +1002,6 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             scenario = scenario_parameter
         else:  # instance array of dict
             scenario = random.choice(scenario_parameter)
-
-        # if map_name not in (town, "OpenDriveMap"):  TODO
-        #     print("The CARLA server uses the wrong map: {}".format(map_name))
-        #     print("This scenario requires to use map: {}".format(town))
-        #     return False
 
         self._scenario_map = scenario
         for actor_id, actor in scenario["actors"].items():
@@ -1172,7 +1147,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 }
 
                 Render.multi_view_render(images, self._camera_poses)
-                if self._manual_controller is None:
+                if self.human_agent is None:
                     Render.dummy_event_handler()
 
             return obs_dict, reward_dict, self._done_dict, info_dict
@@ -1213,75 +1188,40 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             steer = float(np.clip(action[1], -1, 1))
         reverse = False
         hand_brake = False
-        if self._verbose:
-            print(
-                "steer", steer, "throttle", throttle, "brake", brake, "reverse", reverse
-            )
 
-        if self._control_clock is not None:
-            self._control_clock.tick(60)
-            self._manual_controller.parse_events(self, self._control_clock)
-            self._manual_control_camera_manager.render(
-                Render.get_screen(), self._manual_control_render_pose
-            )
-            self._manual_control_camera_manager._hud.render(
-                Render.get_screen(), self._manual_control_render_pose
-            )
-            pygame.display.flip()
+        action_dict = {
+            "steer": steer,
+            "throttle": throttle,
+            "brake": brake,
+            "reverse": reverse,
+            "hand_brake": hand_brake,
+        }
+
+        if self._verbose:
+            print(action_dict)
+
+        if self.human_agent is not None:
+            human_action = self.human_agent(action_dict)
+            if self.human_agent._agent.use_autopilot:
+                toggle_autopilot(self._actors[actor_id], True, self._traffic_manager.get_port())
+            else:
+                toggle_autopilot(self._actors[actor_id], False, self._traffic_manager.get_port())
+                self._actors[actor_id].apply_control(human_action)
 
         config = self._actor_configs[actor_id]
         if config["manual_control"]:
-            self._manual_control_camera_manager._hud.tick(
+            self.human_agent._agent._hic._hud.tick(
                 self.world,
                 self._actors[actor_id],
-                self._collisions[actor_id],
-                self._control_clock,
+                SensorDataProvider.get_collision_sensor(actor_id),
+                self.human_agent._agent._hic._clock,
             )
         elif config["auto_control"]:
-            if getattr(self._actors[actor_id], "set_autopilot", 0):
-                self._actors[actor_id].set_autopilot(
-                    True, self._traffic_manager.get_port()
-                )
+            toggle_autopilot(self._actors[actor_id], True, self._traffic_manager.get_port())
         else:
-            # TODO: Planner based on waypoints.
-            # cur_location = self.actor_list[i].get_location()
-            # dst_location = carla.Location(x = self.end_pos[i][0],
-            # y = self.end_pos[i][1], z = self.end_pos[i][2])
-            # cur_map = self.world.get_map()
-            # next_point_transform = get_transform_from_nearest_way_point(
-            # cur_map, cur_location, dst_location)
-            # the point with z = 0, and the default z of cars are 40
-            # next_point_transform.location.z = 40
-            # self.actor_list[i].set_transform(next_point_transform)
-
-            agent_type = config.get("type", "vehicle")
-            # TODO: Add proper support for pedestrian actor according to action
-            # space of ped actors
-            if agent_type == "pedestrian":
-                rotation = self._actors[actor_id].get_transform().rotation
-                rotation.yaw += steer * 10.0
-                x_dir = math.cos(math.radians(rotation.yaw))
-                y_dir = math.sin(math.radians(rotation.yaw))
-
-                self._actors[actor_id].apply_control(
-                    carla.WalkerControl(
-                        speed=3.0 * throttle,
-                        direction=carla.Vector3D(x_dir, y_dir, 0.0),
-                    )
-                )
-
-            # TODO: Change this if different vehicle types (Eg.:vehicle_4W,
-            #  vehicle_2W, etc) have different control APIs
-            elif "vehicle" in agent_type:
-                self._actors[actor_id].apply_control(
-                    carla.VehicleControl(
-                        throttle=throttle,
-                        steer=steer,
-                        brake=brake,
-                        hand_brake=hand_brake,
-                        reverse=reverse,
-                    )
-                )
+            # Apply RL agent action
+            self._actors[actor_id].apply_control(self._agents[actor_id](action_dict))
+            
         # Asynchronosly (one actor at a time; not all at once in a sync) apply
         # actor actions & perform a server tick after each actor's apply_action
         # if running with sync_server steps
@@ -1291,7 +1231,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             self.world.tick()
         else:
             self.world.wait_for_tick()
-        
+
         CarlaDataProvider.on_carla_tick()
 
         # Process observations
@@ -1304,13 +1244,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             py_measurements["action"] = [float(a) for a in action]
         else:
             py_measurements["action"] = action
-        py_measurements["control"] = {
-            "steer": steer,
-            "throttle": throttle,
-            "brake": brake,
-            "reverse": reverse,
-            "hand_brake": hand_brake,
-        }
+        py_measurements["control"] = action_dict
 
         # Compute done
         done = (
@@ -1358,18 +1292,16 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             if done:
                 self._measurements_file_dict[actor_id].close()
                 self._measurements_file_dict[actor_id] = None
-                # if self.config["convert_images_to_video"] and\
-                #  (not self.video):
-                #    self.images_to_video()
-                #    self.video = Trueseg_city_space
-        original_image = self._cameras[actor_id].image
 
-        return (
-            self._encode_obs(actor_id, original_image, py_measurements),
-            reward,
-            done,
-            py_measurements,
-        )
+        # TODO: Only support one camera for each actor now
+        for sensor_id, data in SensorDataProvider.get_camera_data(actor_id).items():
+            original_image = data[0]
+            return (
+                self._encode_obs(actor_id, original_image, py_measurements),
+                reward,
+                done,
+                py_measurements,
+            )
 
     def _read_observation(self, actor_id):
         """Read observation and return measurement.
@@ -1411,11 +1343,21 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             next_command = "LANE_FOLLOW"
 
         # Sensor Data
-        collision_vehicles = self._collisions[actor_id].collision_vehicles
-        collision_pedestrians = self._collisions[actor_id].collision_pedestrians
-        collision_other = self._collisions[actor_id].collision_other
-        intersection_otherlane = self._lane_invasions[actor_id].offlane
-        intersection_offroad = self._lane_invasions[actor_id].offroad
+        collision_vehicles = None
+        collision_other = None
+        collision_pedestrians = None
+        if cur_config.get("collision_sensor", "off") == "on":
+            collision_sensor = SensorDataProvider.get_collision_sensor(actor_id)
+            collision_vehicles = collision_sensor.collision_vehicles
+            collision_pedestrians = collision_sensor.collision_pedestrians
+            collision_other = collision_sensor.collision_other
+        
+        intersection_otherlane = None
+        intersection_offroad = None
+        if cur_config.get("lane_sensor", "off") == "on":
+            lane_sensor = SensorDataProvider.get_lane_invasion_sensor(actor_id)
+            intersection_otherlane = lane_sensor.offlane
+            intersection_offroad = lane_sensor.offroad
 
         # CarlaDataProvider
         cur_loc = CarlaDataProvider.get_location(cur)
@@ -1514,6 +1456,9 @@ def collided_done(py_measurements):
     )
     return bool(collided)  # or m["total_reward"] < -100)
 
+def toggle_autopilot(actor, activate, traffic_port=8000):
+    if hasattr(actor, "set_autopilot", False):
+        actor.set_autopilot(activate, traffic_port)
 
 def get_next_actions(measurements, is_discrete_actions):
     """Get/Update next action, work with way_point based planner.

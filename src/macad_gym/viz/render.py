@@ -1,9 +1,13 @@
 import math
+import os
 import pygame
 
 pygame.init()
 pygame.display.set_caption("MACAD-Gym")
 
+CARLA_OUT_PATH = os.environ.get("CARLA_OUT", os.path.expanduser("~/carla_out"))
+if CARLA_OUT_PATH and not os.path.exists(CARLA_OUT_PATH):
+    os.makedirs(CARLA_OUT_PATH)
 
 class Render:
     """Handle rendering of pygame window."""
@@ -56,8 +60,6 @@ class Render:
         else:
             surface = pygame.surfarray.make_surface(image)
             screen.blit(surface, render_pose)
-
-        pygame.display.flip()
 
     @staticmethod
     def get_surface_poses(unit_dimension, actor_configs):
@@ -136,7 +138,7 @@ class Render:
         if enable_save:
             for surf, pos in surface_seq:
                 pygame.image.save(
-                    surf, f"./carla_out/{Render.save_cnt}_{pos[0]}_{pos[1]}.png")
+                    surf, f"{CARLA_OUT_PATH}/{Render.save_cnt}_{pos[0]}_{pos[1]}.png")
 
             Render.save_cnt += 1
 
