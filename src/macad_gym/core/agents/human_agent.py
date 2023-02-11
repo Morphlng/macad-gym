@@ -119,7 +119,7 @@ class HumanAgent(MacadAgent):
             input_data (dict): dictionary of sensor data. E.g.
 
             input_data = {
-                "sensor_name": (processed_data, raw_data)
+                "sensor_name": (raw_data, processed_data)
                 ...
             }
 

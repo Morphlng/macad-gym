@@ -552,7 +552,7 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
         return actors
 
     @staticmethod
-    def request_new_actor(model, spawn_point, blueprint=None, attach_to=None, rolename='scenario', autopilot=False,
+    def request_new_actor(model, spawn_point, attach_to=None, rolename='scenario', autopilot=False,
                           random_location=False, color=None, actor_category="car",
                           safe_blueprint=False, tick=True):
         """
@@ -561,7 +561,6 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
         Args:
             model (str): model of the actor to be spawned, e.g. 'vehicle.tesla.model3'
             spawn_point (carla.Transform): spawn point of the actor
-            blueprint (carla.Blueprint): blueprint of the actor to be spawned, if this is not None, the model argument will be ignored
             attach_to (carla.Actor): attach the new actor to an existing actor (e.g. WalkerController attch to a pedestrian)
             autopilot (bool): if True, the actor will be spawned with autopilot enabled
             safe_blueprint (bool): if True, the blueprint will be filtered to avoid spawning firetrucks, ambulances, etc.
@@ -569,9 +568,8 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
 
             Other arguments are the same as in create_blueprint.
         """
-        if blueprint is None:
-            blueprint = CarlaDataProvider.create_blueprint(
-                model, rolename, color, actor_category, safe_blueprint)
+        blueprint = CarlaDataProvider.create_blueprint(
+            model, rolename, color, actor_category, safe_blueprint)
 
         if random_location:
             actor = None
