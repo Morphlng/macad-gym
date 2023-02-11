@@ -250,7 +250,7 @@ class SensorInterface(object):
         """
         self._sensors_objects = {}
         self._new_data_buffers = Queue()
-        self._queue_timeout = 10
+        self._queue_timeout = 1
 
     def register_sensor(self, tag, sensor):
         """

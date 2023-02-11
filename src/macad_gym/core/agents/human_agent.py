@@ -31,6 +31,7 @@ except ImportError:
 import carla
 
 from macad_gym.core.agents.macad_agent import MacadAgent
+from macad_gym.core.data.simulator import Simulator
 from macad_gym.core.sensors.hud import HUD
 from macad_gym.viz.render import Render
 
@@ -105,7 +106,10 @@ class HumanAgent(MacadAgent):
         self.agent_engaged = False
         self.use_autopilot = self.actor_config["auto_control"]
         self.prev_timestamp = 0
+
         self._hic = HumanInterface(actor_config['render_config'])
+        self.callbacks.append(Simulator.add_callback(self._hic._hud.on_world_tick))
+
         self._controller = KeyboardControl(
             actor_config.get("manual_control_config_file", None))
         self._controller._auto_control = self.use_autopilot
@@ -135,14 +139,6 @@ class HumanAgent(MacadAgent):
         self.current_control = control
 
         return control
-
-    def destroy(self):
-        """
-        Cleanup
-        """
-        self._hic.quit_interface()
-        self._controller = None
-
 
 class KeyboardControl(object):
 

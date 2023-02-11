@@ -6,6 +6,7 @@ __author__: Morphlng
 import carla
 from macad_gym.core.agents.autonomous_agent import AutonomousAgent
 from macad_gym.core.data.timer import GameTime
+from macad_gym.core.data.simulator import Simulator
 from macad_gym.core.data.sensor_interface import SensorDataProvider
 
 
@@ -43,6 +44,7 @@ class MacadAgent(AutonomousAgent):
         self.obs = None
         self.actor_config = config
         self.sensor_list = []
+        self.callbacks = [Simulator.add_callback(self.on_carla_tick)]
         self.parse_sensors()
 
     def sensors(self):
@@ -98,3 +100,7 @@ class MacadAgent(AutonomousAgent):
         control = self.run_step(self.obs, timestamp)
         control.manual_gear_shift = False
         return control
+
+    def destroy(self):
+        for callback in self.callbacks:
+            Simulator.remove_callback(callback)

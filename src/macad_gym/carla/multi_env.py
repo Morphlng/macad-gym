@@ -41,12 +41,9 @@ from macad_gym.core.sensors.derived_sensors import LaneInvasionSensor
 from macad_gym.core.sensors.derived_sensors import CollisionSensor
 
 # The following imports depend on these paths being in sys path
-# TODO: Fix this. This probably won't work after packaging/distribution
-sys.path.append("src/macad_gym/carla/PythonAPI")
+sys.path.append(os.path.join(os.environ.get("CARLA_ROOT", "~/software/Carla0.9.13"), "PythonAPI/carla"))
 from macad_gym.core.maps.nav_utils import PathTracker  # noqa: E402
-from macad_gym.carla.PythonAPI.agents.navigation.local_planner import (  # noqa:E402, E501
-    RoadOption,
-)
+from agents.navigation.local_planner import RoadOption  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -342,10 +339,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         self._previous_actions = {}
         self._previous_rewards = {}
         self._last_reward = {}
-        self._npc_vehicles = []  # List of NPC vehicles
-        self._npc_pedestrians = []  # List of NPC pedestrians
         self._agents = {}  # Dictionary of macad_agents with actor_id as key
-        self._agent_callbacks = [] # List of callback_ids return by world.on_tick(agent.on_carla_tick)
         self._actors = {}  # Dictionary of actor.id with actor_id as key
         self._path_trackers = {}  # Dictionary of sensors with actor_id as key
         self._scenario_map = {}  # Dictionary with current scenario map config
@@ -356,21 +350,15 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         Returns:
             N/A
         """
+        for actor_id, agent in self._agents.items():
+            agent.cleanup()
+
         SensorDataProvider.cleanup()
         CarlaDataProvider.cleanup()
         GameTime.restart()
 
-        for actor_id, agent in self._agents.items():
-            agent.cleanup()
-
-        for callback_id in self._agent_callbacks:
-            Simulator.remove_callback(callback_id)
-
         self._actors = {}
         self._agents = {}
-        self._agent_callbacks = []
-        self._npc_vehicles = []
-        self._npc_pedestrians = []
         self._path_trackers = {}
         self.human_agent = None
 
@@ -485,6 +473,9 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
 
             print("spawn_actor: Retry#:{}/{}".format(retry + 1, RETRIES_ON_ERROR))
 
+        if vehicle is None:
+            raise RuntimeError("Failed to spawn actor: {}".format(actor_id))
+
         # TODO: return id?
         return vehicle
 
@@ -563,9 +554,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                         actor_id, LaneInvasionSensor(self._actors[actor_id], 0))
 
                 if not actor_config["manual_control"]:
-                    agent = RLAgent(actor_config)
-                    self._agent_callbacks.append(Simulator.add_callback(agent.on_carla_tick))
-                    agent = AgentWrapper(agent)
+                    agent = AgentWrapper(RLAgent(actor_config))
                     # Spawn cameras
                     agent.setup_sensors(self._actors[actor_id])
                     # TODO: restore this ability
@@ -581,10 +570,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                             "render_pos": self._manual_control_render_pose
                         }
                     })
-                    agent = HumanAgent(actor_config)
-                    self._agent_callbacks.append(Simulator.add_callback(agent._hic._hud.on_world_tick))
-                    self._agent_callbacks.append(Simulator.add_callback(agent.on_carla_tick))
-                    agent = AgentWrapper(agent)
+                    agent = AgentWrapper(HumanAgent(actor_config))
                     agent.setup_sensors(self._actors[actor_id])
                     self.human_agent = agent    # quick access to human agent
 
@@ -620,14 +606,12 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
 
         print("New episode initialized with actors:{}".format(self._actors.keys()))
 
-        self._npc_vehicles, self._npc_pedestrians = apply_traffic(
-            Simulator.get_world(),
-            Simulator.get_traffic_manager(),
+        apply_traffic(
             self._scenario_map.get("num_vehicles", 0),
             self._scenario_map.get("num_pedestrians", 0),
+            safe = self.exclude_hard_vehicles
         )
 
-        CarlaDataProvider.on_carla_tick()
 
     def _load_scenario(self, scenario_parameter):
         self._scenario_map = {}
@@ -877,7 +861,6 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             self._actors[actor_id].apply_control(self._agents[actor_id](action_dict))
 
         Simulator.tick()
-        CarlaDataProvider.on_carla_tick()
 
         # Process observations
         py_measurements = self._read_observation(actor_id)

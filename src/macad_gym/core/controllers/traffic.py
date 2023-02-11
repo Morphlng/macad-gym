@@ -2,28 +2,19 @@
 import logging
 import carla
 from macad_gym.core.data.carla_data_provider import CarlaDataProvider
+from macad_gym.core.data.simulator import Simulator
 
 # TODO make the seed user configurable
 random.seed(10)
 logger = logging.getLogger(__name__)
 
 
-def apply_traffic(world, traffic_manager, num_vehicles, num_pedestrians, safe=False):
+def apply_traffic(num_vehicles, num_pedestrians, percentagePedestriansRunning=0.0, percentagePedestriansCrossing=0.0, safe=False):
     # --------------
     # Spawn vehicles
     # --------------
-    blueprints = CarlaDataProvider._blueprint_library.filter("vehicle.*")
-    if safe:
-        blueprints = list(filter(lambda x: int(x.get_attribute('number_of_wheels')) == 4 and not
-                                 (x.id.endswith('microlino') or
-                                  x.id.endswith('carlacola') or
-                                  x.id.endswith('cybertruck') or
-                                  x.id.endswith('t2') or
-                                  x.id.endswith('sprinter') or
-                                  x.id.endswith('firetruck') or
-                                  x.id.endswith('ambulance')), blueprints))
-
-    blueprints = sorted(blueprints, key=lambda bp: bp.id)
+    world = Simulator.get_world()
+    traffic_manager = Simulator.get_traffic_manager()
 
     spawn_points = CarlaDataProvider._spawn_points
     number_of_spawn_points = len(spawn_points)
@@ -39,18 +30,9 @@ def apply_traffic(world, traffic_manager, num_vehicles, num_pedestrians, safe=Fa
     vehicles_list = []
     failed_v = 0
     for n, transform in enumerate(spawn_points):
-        blueprint = random.choice(blueprints)
-        if blueprint.has_attribute('color'):
-            color = random.choice(blueprint.get_attribute('color').recommended_values)
-            blueprint.set_attribute('color', color)
-        if blueprint.has_attribute('driver_id'):
-            driver_id = random.choice(blueprint.get_attribute('driver_id').recommended_values)
-            blueprint.set_attribute('driver_id', driver_id)
-        blueprint.set_attribute('role_name', 'autopilot')
-
         # spawn the cars and set their autopilot and light state all together
         vehicle = CarlaDataProvider.request_new_actor(
-            "car", transform, blueprint, autopilot=True)
+            "vehicle", transform, rolename="autopilot", autopilot=True, safe_blueprint=safe)
         if vehicle is not None:
             vehicles_list.append(vehicle)
         else:
@@ -61,12 +43,10 @@ def apply_traffic(world, traffic_manager, num_vehicles, num_pedestrians, safe=Fa
     # -------------
     # Spawn Walkers
     # -------------
-    percentagePedestriansRunning = 0.0  # how many pedestrians will run
-    percentagePedestriansCrossing = 0.0  # how many pedestrians will walk through the road
     blueprints = CarlaDataProvider._blueprint_library.filter(
         "walker.pedestrian.*")
     pedestrian_controller_bp = CarlaDataProvider._blueprint_library.find(
-        'controller.ai.walker')
+        "controller.ai.walker")
 
     # Take all the random locations to spawn
     spawn_points = []
@@ -95,10 +75,10 @@ def apply_traffic(world, traffic_manager, num_vehicles, num_pedestrians, safe=Fa
         else:
             speed = 0.0
         pedestrian = CarlaDataProvider.request_new_actor(
-            "pedestrian", spawn_point, pedestrian_bp)
+            "walker.pedestrian", spawn_point, actor_category="pedestrian", blueprint=pedestrian_bp)
         if pedestrian is not None:
             controller = CarlaDataProvider.request_new_actor(
-                "controller", carla.Transform(), pedestrian_controller_bp, attach_to=pedestrian)
+                "controller.ai.walker", carla.Transform(), attach_to=pedestrian, blueprint=pedestrian_controller_bp)
             if controller is not None:
                 pedestrians_list.append(pedestrian)
                 controllers_list.append(controller)
@@ -110,7 +90,7 @@ def apply_traffic(world, traffic_manager, num_vehicles, num_pedestrians, safe=Fa
             failed_p += 1
 
     logger.info("{}/{} pedestrians correctly spawned.".format(num_pedestrians-failed_p, num_pedestrians))
-    world.tick()
+    Simulator.tick()
 
     # Initialize each controller and set target to walk
     world.set_pedestrians_cross_factor(percentagePedestriansCrossing)

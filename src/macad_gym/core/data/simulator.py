@@ -284,6 +284,8 @@ class Simulator:
             CarlaDataProvider.get_world().tick()
         else:
             CarlaDataProvider.get_world().wait_for_tick()
+        
+        CarlaDataProvider.on_carla_tick()
 
     @staticmethod
     def add_callback(func):
@@ -391,10 +393,10 @@ class Simulator:
         except Exception as e:
             print("Error disconnecting client: {}".format(e))
 
-        Simulator.cleanup()
-        CarlaDataProvider.reset(completely=True)
         SensorDataProvider.cleanup()
+        CarlaDataProvider.reset(completely=True)
         GameTime.restart()
+        Simulator.cleanup()
 
 
 def termination_cleanup(*_):

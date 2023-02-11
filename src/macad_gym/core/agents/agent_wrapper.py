@@ -110,3 +110,4 @@ class AgentWrapper(object):
                 self._sensors_list[i].destroy()
                 self._sensors_list[i] = None
         self._sensors_list = []
+        self._agent.destroy()
