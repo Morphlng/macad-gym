@@ -9,11 +9,10 @@ class LaneInvasionSensor(object):
     """Lane Invasion class from carla manual_control.py
     """
 
-    def __init__(self, parent_actor, hud):
+    def __init__(self, parent_actor):
         self.sensor = None
         self._history = []
         self._parent = parent_actor
-        self._hud = hud
         self.offlane = 0  # count of off lane
         self.offroad = 0  # count of off road
         world = CarlaDataProvider.get_world()
@@ -38,9 +37,6 @@ class LaneInvasionSensor(object):
         if not self:
             return
 
-        # text = ['%r' % str(x).split()[-1]
-        #  for x in set(event.crossed_lane_markings)]
-        # self._hud.notification('Crossed line %s' % ' and '.join(text))
         text = [
             '%r' % str(x).split()[-1] for x in set(event.crossed_lane_markings)
         ]
@@ -74,11 +70,10 @@ class CollisionSensor(object):
     """Collision sensor class from carla manual_control.py
     """
 
-    def __init__(self, parent_actor, hud):
+    def __init__(self, parent_actor):
         self.sensor = None
         self._history = []
         self._parent = parent_actor
-        self._hud = hud
         self.collision_vehicles = 0
         self.collision_pedestrians = 0
         self.collision_other = 0
@@ -106,8 +101,6 @@ class CollisionSensor(object):
         if not self:
             return
 
-        # actor_type = get_actor_display_name(event.other_actor)
-        # self._hud.notification('Collision with %r' % actor_type)
         impulse = event.normal_impulse
         intensity = math.sqrt(impulse.x**2 + impulse.y**2 + impulse.z**2)
         self._history.append((event.frame_number, intensity))

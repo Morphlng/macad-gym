@@ -1,5 +1,6 @@
 """
 This file containts the Simulator class, which is used to directly interact with Simulator
+__author__: Morphlng
 """
 import os
 import sys

@@ -15,7 +15,9 @@ logging.basicConfig(filename=LOG_DIR + '/macad-gym.log', level=logging.DEBUG)
 # Fix path issues with included CARLA API
 sys.path.append(
     os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "carla/PythonAPI"))
+        os.environ.get("CARLA_ROOT", "~/software/Carla0.9.13"),
+        "PythonAPI/carla")
+)
 
 # Declare available environments with a brief description
 _AVAILABLE_ENVS = {

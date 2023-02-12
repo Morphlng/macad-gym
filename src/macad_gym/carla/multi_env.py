@@ -328,7 +328,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         self._prev_image = None
         self._episode_id_dict = {}
         self._measurements_file_dict = {}
-        self._weather = None
+        self._weather_spec = None
         self._start_pos = {}  # Start pose for each actor
         self._end_pos = {}  # End pose for each actor
         self._start_coord = {}  # Start coordinate for each actor
@@ -506,7 +506,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         if clean_world:
             self._clean_world()
 
-        self._weather = Simulator.set_weather(self._scenario_map.get("weather_distribution", 0))
+        self._weather_spec = Simulator.set_weather(self._scenario_map.get("weather_distribution", 0))
 
         for actor_id, actor_config in self._actor_configs.items():
             if self._done_dict.get(actor_id, True):
@@ -548,10 +548,10 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 # Spawn collision and lane sensors if necessary
                 if actor_config["collision_sensor"] == "on":
                     SensorDataProvider.update_collision_sensor(
-                        actor_id, CollisionSensor(self._actors[actor_id], 0))
+                        actor_id, CollisionSensor(self._actors[actor_id]))
                 if actor_config["lane_sensor"] == "on":
                     SensorDataProvider.update_lane_invasion_sensor(
-                        actor_id, LaneInvasionSensor(self._actors[actor_id], 0))
+                        actor_id, LaneInvasionSensor(self._actors[actor_id]))
 
                 if not actor_config["manual_control"]:
                     agent = AgentWrapper(RLAgent(actor_config))
@@ -1025,7 +1025,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             "collision_other": collision_other,
             "intersection_offroad": intersection_offroad,
             "intersection_otherlane": intersection_otherlane,
-            "weather": self._weather,
+            "weather": self._weather_spec,
             "map": self._server_map,
             "start_coord": self._start_coord[actor_id],
             "end_coord": self._end_coord[actor_id],
