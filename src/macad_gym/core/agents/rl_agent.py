@@ -7,7 +7,6 @@ import carla
 import math
 from macad_gym.core.agents.macad_agent import MacadAgent
 from macad_gym.core.data.carla_data_provider import CarlaDataProvider
-from macad_gym.core.data.sensor_interface import SensorDataProvider
 
 
 class RLAgent(MacadAgent):

@@ -234,21 +234,24 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         self.reward_range = (-float("inf"), float("inf"))
         self.metadata = {"render.modes": "human"}
 
-        # Belongs to env_config.
+        # Belongs to env_config. Optional parameters are retrieved with .get()
+        self._server_port = self._env_config.get("server_port", None)
+        self._render = self._env_config.get("render", False)
+        self._framestack = self._env_config.get("framestack", 1)
+        self._squash_action_logits = self._env_config.get("squash_action_logits", False)
+        self._verbose = self._env_config.get("verbose", False)
+        self._render_x_res = self._env_config.get("render_x_res", 800)
+        self._render_y_res = self._env_config.get("render_y_res", 600)
+        self._use_depth_camera = self._env_config.get("use_depth_camera", False)
+        self._sync_server = self._env_config.get("sync_server", True)
+        self._fixed_delta_seconds = self._env_config.get("fixed_delta_seconds", 0.05)
+
+        # Belongs to env_config. Required parameters are retrieved directly (Exception if not found)
         self._server_map = self._env_config["server_map"]
         self._map = self._server_map.split("/")[-1]
-        self._render = self._env_config["render"]
-        self._framestack = self._env_config["framestack"]
         self._discrete_actions = self._env_config["discrete_actions"]
-        self._squash_action_logits = self._env_config["squash_action_logits"]
-        self._verbose = self._env_config["verbose"]
-        self._render_x_res = self._env_config["render_x_res"]
-        self._render_y_res = self._env_config["render_y_res"]
         self._x_res = self._env_config["x_res"]
         self._y_res = self._env_config["y_res"]
-        self._use_depth_camera = self._env_config["use_depth_camera"]
-        self._sync_server = self._env_config["sync_server"]
-        self._fixed_delta_seconds = self._env_config["fixed_delta_seconds"]
 
         # For manual_control
         self.human_agent = None
@@ -295,6 +298,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 -1.0, 1.0, shape=(self._y_res, self._x_res, 3 * self._framestack)
             )
 
+        # TODO: The observation space should be actor specific
         # Observation space in output
         if self._env_config["send_measurements"]:
             self.observation_space = Dict(
@@ -321,7 +325,6 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
 
         self._spec = lambda: None
         self._spec.id = "Carla-v0"
-        self._server_port = None    # TODO: add ability to connect to existing server
         self._num_steps = {}
         self._total_reward = {}
         self._prev_measurement = {}
@@ -341,6 +344,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         self._last_reward = {}
         self._agents = {}  # Dictionary of macad_agents with actor_id as key
         self._actors = {}  # Dictionary of actor.id with actor_id as key
+        # TODO: move PathTracker into MacadAgent
         self._path_trackers = {}  # Dictionary of sensors with actor_id as key
         self._scenario_map = {}  # Dictionary with current scenario map config
 
@@ -557,11 +561,6 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                     agent = AgentWrapper(RLAgent(actor_config))
                     # Spawn cameras
                     agent.setup_sensors(self._actors[actor_id])
-                    # TODO: restore this ability
-                    # if actor_config["log_images"]:
-                    #     # 1: Save to disk during runtime
-                    #     # 2: save to memory first, dump to disk on exit
-                    #     camera_manager.set_recording_option(1)
                 else:
                     actor_config.update({
                         "render_config": {
