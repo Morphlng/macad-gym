@@ -108,7 +108,7 @@ class HumanAgent(MacadAgent):
         self.prev_timestamp = 0
 
         self._hic = HumanInterface(actor_config['render_config'])
-        self.callbacks.append(Simulator.add_callback(self._hic._hud.on_world_tick))
+        self.callbacks.append(self.simulator.add_callback(self._hic._hud.on_world_tick))
 
         self._controller = KeyboardControl(
             actor_config.get("manual_control_config_file", None))

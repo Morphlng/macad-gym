@@ -18,69 +18,64 @@ import py_trees
 class GameTime(object):
 
     """
-    This (static) class provides access to the CARLA game time.
+    This class provides access to the CARLA game time.
 
     The elapsed game time can be simply retrieved by calling:
     GameTime.get_time()
     """
 
-    _current_game_time = 0.0  # Elapsed game time after starting this Timer
-    _carla_time = 0.0
-    _last_frame = 0
-    _platform_timestamp = 0
-    _init = False
+    def __init__(self):
+        self._current_game_time = 0.0  # Elapsed game time after starting this Timer
+        self._carla_time = 0.0
+        self._last_frame = 0
+        self._platform_timestamp = 0
+        self._init = False
 
-    @staticmethod
-    def on_carla_tick(timestamp):
+    def on_carla_tick(self, timestamp):
         """
         Callback receiving the CARLA time
         Update time only when frame is more recent that last frame
         """
-        if GameTime._last_frame < timestamp.frame:
-            frames = timestamp.frame - GameTime._last_frame if GameTime._init else 1
-            GameTime._current_game_time += timestamp.delta_seconds * frames
-            GameTime._last_frame = timestamp.frame
-            GameTime._platform_timestamp = datetime.datetime.now()
-            GameTime._init = True
-            GameTime._carla_time = timestamp.elapsed_seconds
+        if self._last_frame < timestamp.frame:
+            frames = timestamp.frame - self._last_frame if self._init else 1
+            self._current_game_time += timestamp.delta_seconds * frames
+            self._last_frame = timestamp.frame
+            self._platform_timestamp = datetime.datetime.now()
+            self._init = True
+            self._carla_time = timestamp.elapsed_seconds
 
-    @staticmethod
-    def restart():
+    def restart(self):
         """
         Reset game timer to 0
         """
-        GameTime._current_game_time = 0.0
-        GameTime._carla_time = 0.0
-        GameTime._last_frame = 0
-        GameTime._init = False
+        self._current_game_time = 0.0
+        self._carla_time = 0.0
+        self._last_frame = 0
+        self._init = False
 
-    @staticmethod
-    def get_time():
+    def get_time(self):
         """
         Returns elapsed game time
         """
-        return GameTime._current_game_time
+        return self._current_game_time
 
-    @staticmethod
-    def get_carla_time():
+    def get_carla_time(self):
         """
         Returns elapsed game time
         """
-        return GameTime._carla_time
+        return self._carla_time
 
-    @staticmethod
-    def get_wallclocktime():
+    def get_wallclocktime(self):
         """
         Returns elapsed game time
         """
-        return GameTime._platform_timestamp
+        return self._platform_timestamp
 
-    @staticmethod
-    def get_frame():
+    def get_frame(self):
         """
         Returns elapsed game time
         """
-        return GameTime._last_frame
+        return self._last_frame
 
 
 class SimulationTimeCondition(py_trees.behaviour.Behaviour):

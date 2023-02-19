@@ -6,7 +6,6 @@ __author__: Morphlng
 import carla
 import math
 from macad_gym.core.agents.macad_agent import MacadAgent
-from macad_gym.core.data.carla_data_provider import CarlaDataProvider
 
 
 class RLAgent(MacadAgent):
@@ -20,7 +19,7 @@ class RLAgent(MacadAgent):
         Setup the agent parameters
         """
         super().setup(actor_config)
-        self.actor = CarlaDataProvider.get_actor_by_id(actor_config["id"])
+        self.actor = self.simulator.get_actor_by_id(actor_config["id"])
 
     def run_step(self, input_data, timestamp=None):
         """

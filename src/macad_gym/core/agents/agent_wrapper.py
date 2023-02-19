@@ -14,7 +14,6 @@ from __future__ import print_function
 import carla
 
 from macad_gym.core.data.sensor_interface import CallBack
-from macad_gym.core.data.carla_data_provider import CarlaDataProvider
 
 
 class AgentWrapper(object):
@@ -48,7 +47,7 @@ class AgentWrapper(object):
         :param vehicle: ego vehicle
         :return:
         """
-        bp_library = CarlaDataProvider.get_world().get_blueprint_library()
+        bp_library = vehicle.get_world().get_blueprint_library()
         for sensor_spec in self._agent.sensors():
             # These are the sensors spawned on the carla world
             bp = bp_library.find(str(sensor_spec['type']))
@@ -75,11 +74,13 @@ class AgentWrapper(object):
                                                  yaw=sensor_spec['yaw'])
             elif sensor_spec['type'].startswith('sensor.lidar'):
                 bp.set_attribute('range', str(sensor_spec['range']))
-                bp.set_attribute('rotation_frequency', str(sensor_spec['rotation_frequency']))
+                bp.set_attribute('rotation_frequency', str(
+                    sensor_spec['rotation_frequency']))
                 bp.set_attribute('channels', str(sensor_spec['channels']))
                 bp.set_attribute('upper_fov', str(sensor_spec['upper_fov']))
                 bp.set_attribute('lower_fov', str(sensor_spec['lower_fov']))
-                bp.set_attribute('points_per_second', str(sensor_spec['points_per_second']))
+                bp.set_attribute('points_per_second', str(
+                    sensor_spec['points_per_second']))
                 sensor_location = carla.Location(x=sensor_spec['x'], y=sensor_spec['y'],
                                                  z=sensor_spec['z'])
                 sensor_rotation = carla.Rotation(pitch=sensor_spec['pitch'],
@@ -91,14 +92,16 @@ class AgentWrapper(object):
                 sensor_rotation = carla.Rotation()
 
             # create sensor
-            sensor_transform = carla.Transform(sensor_location, sensor_rotation)
-            sensor = CarlaDataProvider.get_world().spawn_actor(bp, sensor_transform, attach_to=vehicle, attachment_type=sensor_spec["attachment_type"])
+            sensor_transform = carla.Transform(
+                sensor_location, sensor_rotation)
+            sensor = vehicle.get_world().spawn_actor(bp, sensor_transform, attach_to=vehicle,
+                                                     attachment_type=sensor_spec["attachment_type"])
             # setup callback
             sensor.listen(CallBack(sensor_spec['id'], sensor, self._agent.sensor_interface))
             self._sensors_list.append(sensor)
 
         # Tick once to spawn the sensors
-        CarlaDataProvider.get_world().tick()
+        vehicle.get_world().tick()
 
     def cleanup(self):
         """

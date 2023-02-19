@@ -12,7 +12,6 @@ from __future__ import print_function
 import carla
 
 from macad_gym.core.data.sensor_interface import SensorInterface
-from macad_gym.core.data.timer import GameTime
 from agents.navigation.local_planner import RoadOption
 
 
@@ -134,7 +133,7 @@ class AutonomousAgent(object):
         """
         input_data = self.sensor_interface.get_data()
 
-        timestamp = GameTime.get_time()
+        timestamp = None
         control = self.run_step(input_data, timestamp)
         control.manual_gear_shift = False
 

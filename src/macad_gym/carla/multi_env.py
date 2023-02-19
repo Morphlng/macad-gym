@@ -24,21 +24,13 @@ from gym.spaces import Box, Discrete, Tuple, Dict
 from macad_gym.multi_actor_env import MultiActorEnv
 from macad_gym.core.sensors.utils import preprocess_image
 from macad_gym.core.maps.nodeid_coord_map import MAP_TO_COORDS_MAPPING
-from macad_gym.core.controllers.traffic import apply_traffic
 
-from macad_gym.core.data.carla_data_provider import CarlaDataProvider
-from macad_gym.core.data.sensor_interface import SensorDataProvider
-from macad_gym.core.data.timer import GameTime
 from macad_gym.core.data.simulator import Simulator, CARLA_OUT_PATH
 from macad_gym.core.agents import AgentWrapper, HumanAgent, RLAgent
 
 from macad_gym.carla.reward import Reward
 from macad_gym.carla.scenarios import Scenarios
 from macad_gym.viz.render import Render
-
-# The following imports require carla to be imported already.
-from macad_gym.core.sensors.derived_sensors import LaneInvasionSensor
-from macad_gym.core.sensors.derived_sensors import CollisionSensor
 
 # The following imports depend on these paths being in sys path
 sys.path.append(os.path.join(os.environ.get("CARLA_ROOT", "~/software/Carla0.9.13"), "PythonAPI/carla"))
@@ -325,6 +317,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
 
         self._spec = lambda: None
         self._spec.id = "Carla-v0"
+        self._simulator = None
         self._num_steps = {}
         self._total_reward = {}
         self._prev_measurement = {}
@@ -357,9 +350,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         for actor_id, agent in self._agents.items():
             agent.cleanup()
 
-        SensorDataProvider.cleanup()
-        CarlaDataProvider.cleanup()
-        GameTime.restart()
+        self._simulator.cleanup()
 
         self._actors = {}
         self._agents = {}
@@ -379,8 +370,8 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
 
         for retry in range(RETRIES_ON_ERROR):
             try:
-                if not Simulator._client:
-                    Simulator.init_server(self)
+                if not self._simulator:
+                    self._simulator = Simulator(self)
                     self._reset(clean_world=False)
                 else:
                     self._reset()
@@ -388,7 +379,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             except Exception as e:
                 print("Error during reset: {}".format(traceback.format_exc()))
                 print("reset(): Retry #: {}/{}".format(retry + 1, RETRIES_ON_ERROR))
-                Simulator.clear_server_state()
+                self._simulator = None
                 raise e
 
         # Set appropriate initial values for all actors
@@ -405,10 +396,10 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 image = None
                 while image is None:
                     try:
-                        cameras_data = SensorDataProvider.get_camera_data(actor_id)
+                        cameras_data = self._simulator.get_actor_camera_data(actor_id)
                         image = cameras_data[actor_config["camera_type"]][0]
                     except KeyError as e:
-                        Simulator.tick()
+                        self._simulator.tick()
 
                 obs = self._encode_obs(actor_id, image, py_measurement)
                 self._obs_dict[actor_id] = obs
@@ -450,9 +441,9 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             # Find closest traffic light actor in world.actor_list and return
             from macad_gym.core.controllers import traffic_lights
 
-            transform = Simulator.generate_spawn_point(self._start_pos[actor_id])
+            transform = self._simulator.generate_spawn_point(self._start_pos[actor_id])
             self._actor_configs[actor_id]["start_transform"] = transform
-            tls = traffic_lights.get_tls(Simulator.get_world(), transform, sort=True)
+            tls = traffic_lights.get_tls(self._simulator.get_world(), transform, sort=True)
             #: Return the key (carla.TrafficLight object) of closest match
             return tls[0][0]
 
@@ -462,11 +453,11 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             # TODO: We lost the ability to spawn 2W vehicles. Need to fix this
             model = "vehicle"
 
-        transform = Simulator.generate_spawn_point(self._start_pos[actor_id])
+        transform = self._simulator.generate_spawn_point(self._start_pos[actor_id])
         self._actor_configs[actor_id]["start_transform"] = transform
         vehicle = None
         for retry in range(RETRIES_ON_ERROR):
-            vehicle = CarlaDataProvider.request_new_actor(
+            vehicle = self._simulator.request_new_actor(
                 model, transform, rolename=actor_id,
                 autopilot=self._actor_configs[actor_id].get("auto_control", False),
                 safe_blueprint=self.exclude_hard_vehicles
@@ -510,7 +501,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         if clean_world:
             self._clean_world()
 
-        self._weather_spec = Simulator.set_weather(self._scenario_map.get("weather_distribution", 0))
+        self._weather_spec = self._simulator.set_weather(self._scenario_map.get("weather_distribution", 0))
 
         for actor_id, actor_config in self._actor_configs.items():
             if self._done_dict.get(actor_id, True):
@@ -521,7 +512,8 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
 
                 # Try to spawn actor (soft reset) or fail and reinitialize the server before get back here
                 try:
-                    self._actors[actor_id] = self._spawn_new_actor(actor_id)
+                    actor_spawned = self._spawn_new_actor(actor_id)
+                    self._actors[actor_id] = actor_spawned.id
                 except RuntimeError as spawn_err:
                     del self._done_dict[actor_id]
                     # Chain the exception & re-raise to be handled by the caller `self.reset()`
@@ -532,7 +524,8 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 # We'll use this in SensorDataProvider
                 # The "actor_id" is user defined and is used to identify the actor
                 # The "id" is the carla actor id and is used to identify the actor in the carla world
-                actor_config.update({"actor_id": actor_id, "id": self._actors[actor_id].id})
+                # The "simulator" is used to register callback
+                actor_config.update({"actor_id": actor_id, "id": self._actors[actor_id], "simulator": self._simulator})
 
                 if self._env_config["enable_planner"]:
                     self._path_trackers[actor_id] = PathTracker(
@@ -546,21 +539,19 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                             self._end_pos[actor_id][1],
                             self._end_pos[actor_id][2],
                         ),
-                        self._actors[actor_id],
+                        actor_spawned,
                     )
 
                 # Spawn collision and lane sensors if necessary
                 if actor_config["collision_sensor"] == "on":
-                    SensorDataProvider.update_collision_sensor(
-                        actor_id, CollisionSensor(self._actors[actor_id]))
+                    self._simulator.register_collision_sensor(actor_id, actor_spawned)
                 if actor_config["lane_sensor"] == "on":
-                    SensorDataProvider.update_lane_invasion_sensor(
-                        actor_id, LaneInvasionSensor(self._actors[actor_id]))
+                    self._simulator.register_lane_invasion_sensor(actor_id, actor_spawned)
 
                 if not actor_config["manual_control"]:
                     agent = AgentWrapper(RLAgent(actor_config))
                     # Spawn cameras
-                    agent.setup_sensors(self._actors[actor_id])
+                    agent.setup_sensors(actor_spawned)
                 else:
                     actor_config.update({
                         "render_config": {
@@ -570,7 +561,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                         }
                     })
                     agent = AgentWrapper(HumanAgent(actor_config))
-                    agent.setup_sensors(self._actors[actor_id])
+                    agent.setup_sensors(actor_spawned)
                     self.human_agent = agent    # quick access to human agent
 
                 self._agents[actor_id] = agent
@@ -605,7 +596,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
 
         print("New episode initialized with actors:{}".format(self._actors.keys()))
 
-        apply_traffic(
+        self._simulator.apply_traffic(
             self._scenario_map.get("num_vehicles", 0),
             self._scenario_map.get("num_pedestrians", 0),
             safe = self.exclude_hard_vehicles
@@ -712,7 +703,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             ValueError: If `action_dict` contains actions for nonexistent actor
         """
 
-        if Simulator._client is None:
+        if self._simulator is None:
             raise RuntimeError("Cannot call step(...) before calling reset()")
 
         assert len(self._actors), (
@@ -774,7 +765,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             print(
                 "Error during step, terminating episode early.", traceback.format_exc()
             )
-            Simulator.clear_server_state()
+            self._simulator.clear_server_state()
 
     def _step(self, actor_id, action):
         """Perform the actual step in the CARLA environment
@@ -819,15 +810,14 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         if self._verbose:
             print(action_dict)
 
+        cur_id = self._actors[actor_id]
         if self.human_agent is not None:
             human_action = self.human_agent(action_dict)
             if self.human_agent._agent.use_autopilot:
-                toggle_autopilot(
-                    self._actors[actor_id], True, CarlaDataProvider.get_traffic_manager_port())
+                self._simulator.toggle_actor_autopilot(cur_id, True)
             else:
-                toggle_autopilot(
-                    self._actors[actor_id], False, CarlaDataProvider.get_traffic_manager_port())
-                self._actors[actor_id].apply_control(human_action)
+                self._simulator.toggle_actor_autopilot(cur_id, False)
+                self._simulator.apply_actor_control(cur_id, human_action)
 
         config = self._actor_configs[actor_id]
         if config["enable_planner"]:
@@ -837,29 +827,29 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
 
         if config["manual_control"]:
             self.human_agent._agent._hic._hud.tick(
-                Simulator.get_world(),
-                self._actors[actor_id],
-                SensorDataProvider.get_collision_sensor(actor_id),
+                self._simulator.get_world(),
+                self._simulator.get_actor_by_id(cur_id),
+                self._simulator.get_actor_collision_sensor(actor_id),
                 self.human_agent._agent._hic._clock,
             )
         elif config["auto_control"]:
             if config["enable_planner"]:
                 if path_tracker.agent.done() or self._done_dict[actor_id]:
-                    toggle_autopilot(self._actors[actor_id], True, CarlaDataProvider.get_traffic_manager_port())
+                    self._simulator.toggle_actor_autopilot(cur_id, True)
                 else:
                     # Apply BasicAgent's action, this will navigate the actor to defined destination.
                     # However, the BasicAgent doesn't take consideration of some rules, such as stop sign.
-                    # It's not guaranteed to drive safely.
-                    self._actors[actor_id].apply_control(planned_action)
+                    # Thus it's not guaranteed to drive safely.
+                    self._simulator.apply_actor_control(cur_id, planned_action)
                     # TODO: For debugging, remove drawing when PathTracker is complete
                     path_tracker.draw()
             else:
-                toggle_autopilot(self._actors[actor_id], True, CarlaDataProvider.get_traffic_manager_port())
+                self._simulator.toggle_actor_autopilot(cur_id, True)
         else:
             # Apply RL agent action
-            self._actors[actor_id].apply_control(self._agents[actor_id](action_dict))
+            self._simulator.apply_actor_control(cur_id, self._agents[actor_id](action_dict))
 
-        Simulator.tick()
+        self._simulator.tick()
 
         # Process observations
         py_measurements = self._read_observation(actor_id)
@@ -923,7 +913,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
                 self._measurements_file_dict[actor_id] = None
 
         # TODO: Only support one camera for each actor now
-        for sensor_id, data in SensorDataProvider.get_camera_data(actor_id).items():
+        for sensor_id, data in self._simulator.get_actor_camera_data(actor_id).items():
             original_image = data[0]
             return (
                 self._encode_obs(actor_id, original_image, py_measurements),
@@ -942,7 +932,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
             dict: measurement data.
 
         """
-        cur = self._actors[actor_id]
+        cur_id = self._actors[actor_id]
         cur_config = self._actor_configs[actor_id]
         planner_enabled = cur_config["enable_planner"]
         if planner_enabled:
@@ -973,7 +963,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         collision_other = None
         collision_pedestrians = None
         if cur_config.get("collision_sensor", "off") == "on":
-            collision_sensor = SensorDataProvider.get_collision_sensor(actor_id)
+            collision_sensor = self._simulator.get_actor_collision_sensor(actor_id)
             collision_vehicles = collision_sensor.collision_vehicles
             collision_pedestrians = collision_sensor.collision_pedestrians
             collision_other = collision_sensor.collision_other
@@ -981,29 +971,25 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         intersection_otherlane = None
         intersection_offroad = None
         if cur_config.get("lane_sensor", "off") == "on":
-            lane_sensor = SensorDataProvider.get_lane_invasion_sensor(actor_id)
+            lane_sensor = self._simulator.get_actor_lane_invasion_sensor(actor_id)
             intersection_otherlane = lane_sensor.offlane
             intersection_offroad = lane_sensor.offroad
 
-        # CarlaDataProvider
-        cur_loc = CarlaDataProvider.get_location(cur)
-        cur_transform = CarlaDataProvider.get_transform(cur)
-        # This velocity is sqrt(vx^2 + vy^2)
-        cur_velocity = CarlaDataProvider.get_velocity(cur)
+        (cur_x, cur_y, cur_z), (cur_pitch, cur_yaw, cur_roll) = self._simulator.get_actor_transform(cur_id, decompose=True)
+        cur_velocity = self._simulator.get_actor_velocity(cur_id)
 
         if next_command == "REACH_GOAL":
             distance_to_goal = 0.0
         elif planner_enabled:
-            distance_to_goal = self._path_trackers[actor_id].get_distance_to_end(
-            )
+            distance_to_goal = self._path_trackers[actor_id].get_distance_to_end()
         else:
             distance_to_goal = -1
 
         distance_to_goal_euclidean = float(
             np.linalg.norm(
                 [
-                    cur_loc.x - self._end_pos[actor_id][0],
-                    cur_loc.y - self._end_pos[actor_id][1],
+                    cur_x - self._end_pos[actor_id][0],
+                    cur_y - self._end_pos[actor_id][1],
                 ]
             )
         )
@@ -1011,11 +997,11 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         py_measurements = {
             "episode_id": self._episode_id_dict[actor_id],
             "step": self._num_steps[actor_id],
-            "x": cur_loc.x,
-            "y": cur_loc.y,
-            "pitch": cur_transform.rotation.pitch,
-            "yaw": cur_transform.rotation.yaw,
-            "roll": cur_transform.rotation.roll,
+            "x": cur_x,
+            "y": cur_y,
+            "pitch": cur_pitch,
+            "yaw": cur_yaw,
+            "roll": cur_roll,
             "forward_speed": cur_velocity,  # Used to be vx
             "distance_to_goal": distance_to_goal,
             "distance_to_goal_euclidean": distance_to_goal_euclidean,
@@ -1042,7 +1028,7 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
     def close(self):
         """Clean-up the world, clear server state & close the Env"""
         self._clean_world()
-        Simulator.clear_server_state()
+        self._simulator.clear_server_state()
 
 
 def print_measurements(measurements):
@@ -1082,11 +1068,6 @@ def collided_done(py_measurements):
         or m["collision_other"] > 0
     )
     return bool(collided)  # or m["total_reward"] < -100)
-
-
-def toggle_autopilot(actor, activate, traffic_port=8000):
-    if hasattr(actor, "set_autopilot"):
-        actor.set_autopilot(activate, traffic_port)
 
 
 def get_next_actions(measurements, is_discrete_actions):

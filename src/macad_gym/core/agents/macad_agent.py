@@ -5,9 +5,6 @@ __author__: Morphlng
 
 import carla
 from macad_gym.core.agents.autonomous_agent import AutonomousAgent
-from macad_gym.core.data.timer import GameTime
-from macad_gym.core.data.simulator import Simulator
-from macad_gym.core.data.sensor_interface import SensorDataProvider
 
 
 def sensor_name_to_bp(camera_type):
@@ -41,10 +38,12 @@ class MacadAgent(AutonomousAgent):
     ]
 
     def setup(self, config):
-        self.obs = None
+        self.simulator = config.pop("simulator")
         self.actor_config = config
+
+        self.obs = None
         self.sensor_list = []
-        self.callbacks = [Simulator.add_callback(self.on_carla_tick)]
+        self.callbacks = [self.simulator.add_callback(self.on_carla_tick)]
         self.parse_sensors()
 
     def sensors(self):
@@ -57,7 +56,7 @@ class MacadAgent(AutonomousAgent):
 
         if not isinstance(camera_types, list):
             camera_types = [camera_types]
-        
+
         for camera_type in camera_types:
             camera_pos = self.actor_config.get("camera_position", 0)
 
@@ -97,7 +96,7 @@ class MacadAgent(AutonomousAgent):
         if not self.sensor_interface._new_data_buffers.empty():
             self.obs = self.sensor_interface.get_data()
 
-        SensorDataProvider.update_camera_data(
+        self.simulator._sensor_provider.update_camera_data(
             self.actor_config["actor_id"], self.obs)
 
         # TODO: check actor_config["log_images"] to save image
@@ -107,11 +106,17 @@ class MacadAgent(AutonomousAgent):
         Execute the agent call, e.g. agent()
         Returns the next vehicle controls
         """
-        timestamp = GameTime.get_time()
+        timestamp = self.simulator._game_time.get_time()
         control = self.run_step(self.obs, timestamp)
         control.manual_gear_shift = False
         return control
 
     def destroy(self):
         for callback in self.callbacks:
-            Simulator.remove_callback(callback)
+            self.simulator.remove_callback(callback)
+
+        self.simulator = None
+        self.obs = None
+        self.actor_config = None
+        self.sensor_list = []
+        self.callbacks = []

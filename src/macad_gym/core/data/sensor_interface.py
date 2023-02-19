@@ -55,13 +55,14 @@ class SensorDataProvider:
         ...
     }
     """
-    _global_data = {}
-    _camera_data_dict = {}
-    _collision_sensors = {}
-    _lane_invasion_sensors = {}
 
-    @staticmethod
-    def update_camera_data(actor_id, data):
+    def __init__(self):
+        self._global_data = {}
+        self._camera_data_dict = {}
+        self._collision_sensors = {}
+        self._lane_invasion_sensors = {}
+
+    def update_camera_data(self, actor_id, data):
         """
         Updates the camera data
 
@@ -75,25 +76,23 @@ class SensorDataProvider:
             }
         """
         if data is not None:
-            filter_data = {k:v for k,v in data.items() if k != "ManualControl"}
-            SensorDataProvider._camera_data_dict[actor_id] = filter_data
+            filter_data = {k: v for k, v in data.items() if k !=
+                           "ManualControl"}
+            self._camera_data_dict[actor_id] = filter_data
 
-    @staticmethod
-    def update_collision_sensor(actor_id, sensor):
+    def update_collision_sensor(self, actor_id, sensor):
         """
         Updates a collision sensor
         """
-        SensorDataProvider._collision_sensors[actor_id] = sensor
+        self._collision_sensors[actor_id] = sensor
 
-    @staticmethod
-    def update_lane_invasion_sensor(actor_id, sensor):
+    def update_lane_invasion_sensor(self, actor_id, sensor):
         """
         Updates a lane invasion sensor
         """
-        SensorDataProvider._lane_invasion_sensors[actor_id] = sensor
+        self._lane_invasion_sensors[actor_id] = sensor
 
-    @staticmethod
-    def get_camera_data(actor_id):
+    def get_camera_data(self, actor_id):
         """
         Returns the camera data of the actor
 
@@ -105,49 +104,45 @@ class SensorDataProvider:
                 ...
             }
         """
-        return SensorDataProvider._camera_data_dict[actor_id]
+        return self._camera_data_dict[actor_id]
 
-    @staticmethod
-    def get_collision_sensor(actor_id):
+    def get_collision_sensor(self, actor_id):
         """
         Returns:
             CollisionSensor: collision sensor of the actor
         """
-        return SensorDataProvider._collision_sensors[actor_id]
+        return self._collision_sensors[actor_id]
 
-    @staticmethod
-    def get_lane_invasion_sensor(actor_id):
+    def get_lane_invasion_sensor(self, actor_id):
         """
         Returns:
             LaneInvasionSensor: lane invasion sensor of the actor
         """
-        return SensorDataProvider._lane_invasion_sensors[actor_id]
+        return self._lane_invasion_sensors[actor_id]
 
-    @staticmethod
-    def get_all_data():
+    def get_all_data(self):
         """
         Returns all sensor data
         """
         return {
-            'camera': SensorDataProvider._camera_data_dict,
-            'collision': SensorDataProvider._collision_sensors,
-            'lane_invasion': SensorDataProvider._lane_invasion_sensors,
-            'global': SensorDataProvider._global_data
+            'camera': self._camera_data_dict,
+            'collision': self._collision_sensors,
+            'lane_invasion': self._lane_invasion_sensors,
+            'global': self._global_data
         }
 
-    @staticmethod
-    def cleanup():
-        for actor_id, colli in SensorDataProvider._collision_sensors.items():
+    def cleanup(self):
+        for actor_id, colli in self._collision_sensors.items():
             if colli.sensor.is_alive:
                 colli.sensor.destroy()
-        for actor_id, lane in SensorDataProvider._lane_invasion_sensors.items():
+        for actor_id, lane in self._lane_invasion_sensors.items():
             if lane.sensor.is_alive:
                 lane.sensor.destroy()
 
-        SensorDataProvider._global_data = {}
-        SensorDataProvider._camera_data_dict = {}
-        SensorDataProvider._collision_sensors = {}
-        SensorDataProvider._lane_invasion_sensors = {}
+        self._global_data = {}
+        self._camera_data_dict = {}
+        self._collision_sensors = {}
+        self._lane_invasion_sensors = {}
 
 
 class CallBack(object):

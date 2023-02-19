@@ -1,7 +1,6 @@
 from __future__ import absolute_import
 import os
 from enum import Enum
-from macad_gym.core.data.carla_data_provider import CarlaDataProvider
 
 import numpy as np
 import pygame
@@ -71,7 +70,7 @@ class CameraManager(object):
         ]
 
         for item in self._sensors:
-            bp = CarlaDataProvider._blueprint_library.find(item[0])
+            bp = self._parent.get_world().get_blueprint_library().find(item[0])
             if item[0].startswith('sensor.camera'):
                 bp.set_attribute('image_size_x', str(hud.dim[0]))
                 bp.set_attribute('image_size_y', str(hud.dim[1]))
