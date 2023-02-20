@@ -388,7 +388,7 @@ class Simulator:
         """Get an actor's camera data.
 
         Args:
-            id (str): Actor id.
+            actor_id (str): Actor id.
 
         Returns:
             Dict: image data from sensor_interface.get_data(). E.g.
@@ -404,7 +404,7 @@ class Simulator:
         """Get an actor's collision sensor.
 
         Args:
-            id (str): Actor id.
+            actor_id (str): Actor id.
 
         Returns:
             CollisionSensor: The collision sensor.
@@ -416,7 +416,7 @@ class Simulator:
         """Get an actor's lane invasion sensor.
 
         Args:
-            id (str): Actor id.
+            actor_id (str): Actor id.
 
         Returns:
             LaneInvasionSensor: The lane invasion sensor.
@@ -459,7 +459,7 @@ class Simulator:
             **kwargs: Arbitrary keyword arguments.
 
         Returns:
-            int: The id of the created actor.
+            carla.Actor: The actor.
         """
         actor = self._data_provider.request_new_actor(*args, **kwargs)
         return actor
@@ -469,7 +469,7 @@ class Simulator:
 
         Args:
             actor_id (str): The actor id.
-            actor (carla.Actor): The actor.
+            actor (carla.Actor): The actor which the sensor is attached to.
         """
         self._sensor_provider.update_collision_sensor(
             actor_id, CollisionSensor(actor))
@@ -479,7 +479,7 @@ class Simulator:
 
         Args:
             actor_id (str): The actor id.
-            actor (carla.Actor): The actor.
+            actor (carla.Actor): The actor which the sensor is attached to.
         """
         self._sensor_provider.update_lane_invasion_sensor(
             actor_id, LaneInvasionSensor(actor))

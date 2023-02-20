@@ -471,7 +471,6 @@ class MultiCarlaEnv(*MultiAgentEnvBases):
         if vehicle is None:
             raise RuntimeError("Failed to spawn actor: {}".format(actor_id))
 
-        # TODO: return id?
         return vehicle
 
     def _reset(self, clean_world=True):
